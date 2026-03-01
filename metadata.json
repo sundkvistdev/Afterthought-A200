@@ -1,0 +1,5 @@
+{
+  "name": "Afterthought A200 Simulator",
+  "description": "A modular simulation of the Samsoft Afterthought A200 mobile device with a 30 FPS rendering loop and input polling.",
+  "requestFramePermissions": []
+}
