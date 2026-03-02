@@ -34,6 +34,7 @@ export interface Notification {
   softKeys: SoftKeys;
   onAction: (action: 'left' | 'right') => void;
   type: 'info' | 'error' | 'call';
+  timeout?: number;
 }
 
 export interface Frame {
@@ -79,6 +80,7 @@ export class OS {
 
   private notificationQueue: Notification[] = [];
   private currentNotification: Notification | null = null;
+  private notificationTimeout: number | null = null;
 
   constructor(private input: InputManager, private renderer: Renderer) {
     this.sound = new SoundEngine();
@@ -159,10 +161,20 @@ export class OS {
           } else {
             this.sound.playSequence(TONES.SMS_TONES[this.settings.get('sms_tone_idx') as number]);
           }
+
+          if (note.timeout) {
+            this.notificationTimeout = window.setTimeout(() => {
+              this.popFrame();
+            }, note.timeout);
+          }
         },
         onLeave: () => {
           this.sound.stop();
           this.currentNotification = null;
+          if (this.notificationTimeout) {
+            clearTimeout(this.notificationTimeout);
+            this.notificationTimeout = null;
+          }
         },
         onKey: (key) => {
           if (!this.currentNotification) return false;
@@ -370,22 +382,66 @@ export class OS {
           this.renderList(renderer, ['Save', 'Don\'t Save', 'Cancel'], state.selectedIndex);
         }
       },
-      DEBUG_MENU: this.createListFrame('DEBUG_MENU', 'DEBUG MODE', ['Auto: Off', 'Auto: 60s', 'Auto: 30s', 'Auto: 5s', 'Urgent Alert'], (idx) => {
-        if (idx === 4) {
-          this.showNotification({
+      DEBUG_MENU: this.createListFrame('DEBUG_MENU', 'DEBUG MODE', [
+        '1 Urgent Alert', 
+        '2 Trigger SMS', 
+        '3 Reset Settings', 
+        '4 Toggle Vibrate', 
+        '5 Toggle Beep', 
+        '6 Clear Inbox', 
+        '7 Clear Outbox', 
+        '8 Fill Inbox (5)', 
+        '9 Fill Outbox (5)', 
+        '10 System Info', 
+        '11 Battery Low', 
+        '12 Signal Lost', 
+        '13 New Voicemail', 
+        '14 Network Busy', 
+        '15 SIM Error', 
+        '16 Memory Full', 
+        '17 Software Update', 
+        '18 Factory Reset', 
+        '19 Test Ring 1', 
+        '20 Test Ring 2', 
+        '21 Test SMS 1', 
+        '22 Test SMS 2'
+      ], (idx) => {
+        const debugActions: (() => void)[] = [
+          () => this.showNotification({
             id: 'urgent_' + Date.now(),
             icon: 'SIGNAL',
             header: 'SYSTEM ERROR',
             body: 'A critical system error has occurred. Please restart the device immediately.',
             softKeys: { left: 'Restart', right: 'Ignore' },
             type: 'error',
+            timeout: 5000,
             onAction: (action) => {
               if (action === 'left') this.debugSystemReset();
             }
-          });
-        } else {
-          this.popFrame();
-        }
+          }),
+          () => this.triggerSMS(),
+          () => { this.settings.reset(); this.popFrame(); },
+          () => { this.settings.set('vibrate_call', !this.settings.get('vibrate_call')); this.popFrame(); },
+          () => { this.settings.set('keypad_beep', !this.settings.get('keypad_beep')); this.popFrame(); },
+          () => { this.inbox = []; this.unreadMessages = 0; this.popFrame(); },
+          () => { this.outbox = []; this.popFrame(); },
+          () => { for(let i=0; i<5; i++) this.receiveMessage(); this.popFrame(); },
+          () => { for(let i=0; i<5; i++) this.outbox.unshift({ to: "Sent", text: "Debug message " + i, time: "Now", read: true }); this.popFrame(); },
+          () => this.showNotification({ id: 'info', icon: 'SETTINGS', header: 'SYSTEM INFO', body: 'Samsoft Afterthought A200\nVer: 1.0.4-DEBUG\nRAM: 128KB', softKeys: { left: 'OK', right: 'Back' }, type: 'info', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'batt', icon: 'BATTERY', header: 'BATTERY LOW', body: 'Connect charger now.', softKeys: { left: 'OK', right: 'Dismiss' }, type: 'error', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'sig', icon: 'SIGNAL', header: 'NO SIGNAL', body: 'Searching for network...', softKeys: { left: 'OK', right: 'Retry' }, type: 'error', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'vm', icon: 'PHONE', header: 'VOICEMAIL', body: 'You have 1 new voicemail.', softKeys: { left: 'Listen', right: 'Later' }, type: 'info', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'busy', icon: 'SIGNAL', header: 'NETWORK BUSY', body: 'Please try again later.', softKeys: { left: 'OK', right: 'Retry' }, type: 'error', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'sim', icon: 'LOCK', header: 'SIM ERROR', body: 'Invalid SIM card detected.', softKeys: { left: 'OK', right: 'Restart' }, type: 'error', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'mem', icon: 'SETTINGS', header: 'MEMORY FULL', body: 'Delete some messages.', softKeys: { left: 'OK', right: 'Manage' }, type: 'error', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'upd', icon: 'SETTINGS', header: 'UPDATE', body: 'Software update available.', softKeys: { left: 'Install', right: 'Later' }, type: 'info', timeout: 5000, onAction: () => {} }),
+          () => this.showNotification({ id: 'fac', icon: 'TRASH', header: 'RESET', body: 'Delete all data?', softKeys: { left: 'Yes', right: 'No' }, type: 'error', timeout: 5000, onAction: (a) => { if(a==='left') this.debugSystemReset(); } }),
+          () => this.sound.playSequence(TONES.RINGTONES[0]),
+          () => this.sound.playSequence(TONES.RINGTONES[1]),
+          () => this.sound.playSequence(TONES.SMS_TONES[0]),
+          () => this.sound.playSequence(TONES.SMS_TONES[1]),
+        ];
+        if (debugActions[idx]) debugActions[idx]();
       })
     };
   }
@@ -399,11 +455,13 @@ export class OS {
         const state = this.getFrameState(id);
         if (key === 'UP') {
           state.selectedIndex = (state.selectedIndex - 1 + items.length) % items.length;
+          this.updateScroll(id, items.length);
           this.sound.beep();
           return true;
         }
         if (key === 'DOWN') {
           state.selectedIndex = (state.selectedIndex + 1) % items.length;
+          this.updateScroll(id, items.length);
           this.sound.beep();
           return true;
         }
@@ -428,11 +486,13 @@ export class OS {
         const state = this.getFrameState(id);
         if (key === 'UP') {
           state.selectedIndex = (state.selectedIndex - 1 + items.length) % items.length;
+          this.updateScroll(id, items.length);
           if (onPreview) onPreview(state.selectedIndex);
           return true;
         }
         if (key === 'DOWN') {
           state.selectedIndex = (state.selectedIndex + 1) % items.length;
+          this.updateScroll(id, items.length);
           if (onPreview) onPreview(state.selectedIndex);
           return true;
         }
@@ -472,10 +532,12 @@ export class OS {
         
         if (key === 'UP') {
           state.selectedIndex = (state.selectedIndex - 1 + items.length) % items.length;
+          this.updateScroll(id, items.length);
           return true;
         }
         if (key === 'DOWN') {
           state.selectedIndex = (state.selectedIndex + 1) % items.length;
+          this.updateScroll(id, items.length);
           return true;
         }
         if (key === 'SOFT_L') {
@@ -554,6 +616,18 @@ export class OS {
     renderer.drawScrollbar(LAYOUT.SCREEN_WIDTH - 2, LAYOUT.HEADER_HEIGHT, 2, viewportHeight, totalHeight, viewportHeight, scrollY);
   }
 
+  private updateScroll(id: string, itemsCount: number) {
+    const state = this.getFrameState(id);
+    const viewportHeight = LAYOUT.SCREEN_HEIGHT - LAYOUT.HEADER_HEIGHT - LAYOUT.FOOTER_HEIGHT;
+    const itemY = state.selectedIndex * LAYOUT.MENU_ITEM_HEIGHT;
+    
+    if (itemY < state.scrollY) {
+      state.scrollY = itemY;
+    } else if (itemY + LAYOUT.MENU_ITEM_HEIGHT > state.scrollY + viewportHeight) {
+      state.scrollY = itemY + LAYOUT.MENU_ITEM_HEIGHT - viewportHeight;
+    }
+  }
+
   private getFrameState(id: string): FrameState {
     if (!this.frameStates[id]) {
       this.frameStates[id] = { selectedIndex: 0, scrollY: 0, scrollX: 0 };
@@ -630,6 +704,8 @@ export class OS {
       if (this.bootProgress >= 2000) {
         this.powerState = 'ON';
         this.bootProgress = 0;
+        this.sound.startup();
+        this.renderer.cacheIcons(COLORS.white, 10);
       }
       return;
     }
